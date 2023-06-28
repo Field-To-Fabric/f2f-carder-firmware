@@ -1,3 +1,8 @@
+#include <avr/io.h>
+#include <avr/interrupt.h>
+// Define the clock speed as being 16MHz. Setting this does not change the clock speed,
+// only calculations that need to know the speed.
+#define CLOCK_SPEED     16000000
 
 #define NUMBER_OF_DRUMS 12
 
@@ -56,16 +61,16 @@
 
 typedef struct {
   // Pin definitions
-  byte enablePin;     // Enable pin number
-  byte directionPin;  // Direction pin number
-  byte pulsePin;      // Pulse pin number
+  uint8_t enablePin;     // Enable pin number
+  uint8_t directionPin;  // Direction pin number
+  uint8_t pulsePin;      // Pulse pin number
 
   // Trackers
-  byte enable;                    // 0 if the stepper is disabled, 1 if the stepper is enabled.
-  byte direction;                 // Determines if the stepper direction pin should be set or not. 
-  unsigned int ticksPerStep;      // The number active number of ticks to count per step. If zero, the stepper is stopped. This is what the stepper is counting until.
-  unsigned int goalTicksPerStep;  // The number of ticks per step that this stepper is configured to ramp up or down to. This is the "goal speed" and what ticksPerStep will be set to on "start"
-  unsigned int tickCounter;       // The current number of ticks that have been done on this stepper
+  uint8_t enable;                    // 0 if the stepper is disabled, 1 if the stepper is enabled.
+  uint8_t direction;                 // Determines if the stepper direction pin should be set or not. 
+  uint16_t ticksPerStep;      // The number active number of ticks to count per step. If zero, the stepper is stopped. This is what the stepper is counting until.
+  uint16_t goalTicksPerStep;  // The number of ticks per step that this stepper is configured to ramp up or down to. This is the "goal speed" and what ticksPerStep will be set to on "start"
+  uint16_t tickCounter;       // The current number of ticks that have been done on this stepper
 } Stepper;
 
 // Set up an array of 12 steppers with their pin definitions. This is a totally
@@ -89,15 +94,17 @@ Stepper drums[] = {
 #define ERROR_MAX_COMMAND_LENGTH_REACHED 1
 #define ERROR_FAILED_TO_TOKENIZE 2
 #define ERROR_DRUM_OUT_OF_BOUNDS 3
+#define ERROR_INVALID_CMD        4
 
 const char* errorMessage[] = {
   "",
   "The entered command exceeds the maximum command length.",
   "The entered command could not be tokenized.",
   "The specified drum index was not valid.",
+  "The specified command is not valid.",
 };
 
-byte error = ERROR_OK;
+uint8_t error = ERROR_OK;
 bool errorShouldHalt = false;
 
 void checkForError(){
@@ -109,16 +116,25 @@ void checkForError(){
       // TODO: Clear interrupts
       while(1){}
     }
+    error = ERROR_OK;
   }
 }
 
 #define MAX_COMMAND_LENGTH 16
+#define ECHO_OUTPUT
+
+#ifdef ECHO_OUTPUT
+#define ECHO(X) Serial.print(X)
+#endif
+#ifndef ECHO_OUTPUT
+#define ECHO(X) //
+#endif
 
 char command[MAX_COMMAND_LENGTH + 1];
-byte commandLength = 0;
+uint8_t commandLength = 0;
 
 // Takes a string, and attempts to parse it to a valid drum index. If it contains non-digits, returns NUMBER_OF_DRUMS which is an invalid index.
-byte parseDrum(char* pDrum) {
+uint8_t parseDrum(char* pDrum) {
   char* i = pDrum;
   // Iterate over pDrum by getting a pointer to a character. If it's not a digit, return NUMBER_OF_DRUMS which is invalid.
   while (*i != '\0') {
@@ -131,38 +147,40 @@ byte parseDrum(char* pDrum) {
 void doStart() {
   char* pDrum = strtok(NULL, " \r\n");
   if (pDrum == NULL) {
-    for(byte i = 0; i<NUMBER_OF_DRUMS; i++) {
+    for(uint8_t i = 0; i<NUMBER_OF_DRUMS; i++) {
       startStepper(i);
     }
   }
   else {
-    byte drumIndex = parseDrum(pDrum);
+    uint8_t drumIndex = parseDrum(pDrum);
     if (drumIndex >= NUMBER_OF_DRUMS) {
       error = ERROR_DRUM_OUT_OF_BOUNDS;
       return;
     }
     startStepper(drumIndex);
   }
+  Serial.println("Started.");
 }
 
 void doStop() {
   char* pDrum = strtok(NULL, " \r\n");
   if (pDrum == NULL) {
-    for(byte i = 0; i<NUMBER_OF_DRUMS; i++) {
+    for(uint8_t i = 0; i<NUMBER_OF_DRUMS; i++) {
       stopStepper(i);
     }
   }
   else {
-    byte drumIndex = parseDrum(pDrum);
+    uint8_t drumIndex = parseDrum(pDrum);
     if (drumIndex >= NUMBER_OF_DRUMS) {
       error = ERROR_DRUM_OUT_OF_BOUNDS;
       return;
     }
     stopStepper(drumIndex);
   }
+  Serial.println("Stopped.");
 }
 
-void executeCommand(char* pCommand, byte commandLen) {
+void executeCommand(char* pCommand, uint8_t commandLen) {
 
   char* verb = strtok(pCommand, " \r\n");
   if (verb == NULL) {
@@ -191,6 +209,9 @@ void executeCommand(char* pCommand, byte commandLen) {
   else if (strcmp(verb, "stop") == 0) {
     doStop();
   }
+  else {
+    error = ERROR_INVALID_CMD;
+  }
 
 }
 
@@ -198,13 +219,14 @@ void executeCommand(char* pCommand, byte commandLen) {
 void readAndProcessInput() {
   while (Serial.available()) {
     char c = Serial.read();
+    ECHO(c);
     
     // If we find a semicolon, a full command has been found.
     if (c == ';') {
+      ECHO("\n");
       // Terminate and then parse the command
       command[commandLength] = '\0';
       executeCommand(command, commandLength);
-
       // Reset the command buffer
       command[0] = '\0';
       commandLength = 0;
@@ -220,19 +242,19 @@ void readAndProcessInput() {
         commandLength = 0;
         return;
       } 
-      command[commandLength++];
+      command[commandLength++] = c;
     }
   }
 }
 
 // Get a pointer to stepper struct, returns NULL if invalid index.
-inline Stepper* getStepper(byte index) {
+inline Stepper* getStepper(uint8_t index) {
   if (index > NUMBER_OF_DRUMS) return NULL;
   return &(drums[index]);
 }
 
 void initializeSteppers(void) {
-  for (byte i=0; i<NUMBER_OF_DRUMS; i++) {
+  for (uint8_t i=0; i<NUMBER_OF_DRUMS; i++) {
     Stepper* s = getStepper(i);
     // Initialize status items to zero.
     s->enable = 0;
@@ -247,7 +269,69 @@ void initializeSteppers(void) {
   }
 }
 
-inline void enableStepper(byte index){
+
+void initializeTickInterrupt(uint16_t frequency_hz) {
+
+  Serial.println("Initializing tick interrupt...");
+
+  // Clear control registers
+  TCCR4A = 0;
+  TCCR4B = 0;
+
+  // Initialize the timer counter to 0
+  TCNT4 = 0;
+
+  // Find the prescaler value that has the greatest resolution.
+  // For 1000Hz this should be 64, for 1Hz this should be 1024.
+  uint16_t prescalerValue = 0;
+  uint8_t tccr4bValue = 0;
+  for (uint16_t prescalerOption = 1024; prescalerOption >= 1; prescalerOption /= 2) {
+      uint32_t interruptPeriod = CLOCK_SPEED / (prescalerOption * frequency_hz);
+      if (interruptPeriod >= 1) {
+        prescalerValue = prescalerOption;
+        if (prescalerValue == 1024)
+            tccr4bValue = _BV(CS42) | _BV(CS40);  // Set prescaler to 1024
+        else if (prescalerValue == 256)
+            tccr4bValue = _BV(CS42);  // Set prescaler to 256
+        else if (prescalerValue == 64)
+            tccr4bValue = _BV(CS41) | _BV(CS40);  // Set prescaler to 64
+        else if (prescalerValue == 8)
+            tccr4bValue = _BV(CS41);  // Set prescaler to 8
+        else if (prescalerValue == 1)
+            tccr4bValue = _BV(CS40);  // Set prescaler to 1
+          break;
+      }
+  }
+
+  // Set timer ticks per motion tick
+  // timer ticks = clock speed / (prescaler * desired frequency in Hz) - 1
+  // We subtract 1 because the timer start at zero.
+  // Prescaler is chosen to have the greatest 
+  OCR4A = (CLOCK_SPEED / (prescalerValue * frequency_hz)) - 1;
+
+  TCCR4B |= tccr4bValue;
+
+  // Enable CTC (Clear Timer on Compare match)
+  TCCR4B |= (1 << WGM42);
+
+  // Enable the timer compare interrupt
+  TIMSK4 |= (1 << OCIE4A);
+
+}
+
+void initializeInterrupts(void) {
+  // Disable interrupts
+  cli();
+
+  // Configure interrupt registers
+  initializeTickInterrupt(1);
+
+  Serial.println("Enabling global interrupts...");
+  // Re-enable interrupts
+  sei();
+}
+
+inline void enableStepper(uint8_t index){
   Stepper* s = getStepper(index);
   if (s == NULL) return;
 
@@ -255,7 +339,7 @@ inline void enableStepper(byte index){
   digitalWrite(s->enablePin, HIGH);
 }
 
-inline void disableStepper(byte index){
+inline void disableStepper(uint8_t index){
   Stepper* s = getStepper(index);
   if (s == NULL) return;
 
@@ -263,7 +347,7 @@ inline void disableStepper(byte index){
   digitalWrite(s->enablePin, LOW);
 }
 
-inline void startStepper(byte index) {
+inline void startStepper(uint8_t index) {
   Stepper* s = getStepper(index);
   if (s == NULL) return;
 
@@ -271,14 +355,14 @@ inline void startStepper(byte index) {
   s->ticksPerStep = s->goalTicksPerStep;
 }
 
-inline void stopStepper(byte index) {
+inline void stopStepper(uint8_t index) {
   Stepper* s = getStepper(index);
   if (s == NULL) return;
 
   s->ticksPerStep = 0;
 }
 
-inline void setStepperDirection(byte index, byte direction){
+inline void setStepperDirection(uint8_t index, uint8_t direction){
   Stepper* s = getStepper(index);
   if (s == NULL) return;
   if (direction > 1) return;
@@ -319,7 +403,8 @@ inline void doStepperTick(Stepper* s) {
 }
 
 void tick() {
-  for (byte i=0; i<NUMBER_OF_DRUMS; i++){
+  Serial.println("Tick!");
+  for (uint8_t i=0; i<NUMBER_OF_DRUMS; i++){
     Stepper* s = getStepper(i);
     if (s == NULL) continue;
 
@@ -327,11 +412,19 @@ void tick() {
   }
 }
 
+// Interrupt handler to do a tick on each interrupt
+ISR(TIMER4_COMPA_vect) {
+  tick();
+}
+
 void setup() {
   Serial.begin(115200);
-  Serial.println("Initializing steppers...");
 
+  Serial.println("Initializing steppers...");
   initializeSteppers();
+
+  Serial.println("Initializing interrupts...");
+  initializeInterrupts();
 }
 
 void loop() {
