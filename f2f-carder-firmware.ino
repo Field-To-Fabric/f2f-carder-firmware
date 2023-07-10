@@ -245,7 +245,7 @@ void doSetRamp() {
     return;
   }
 
-  uint16_t rampValue = parseInteger(pSpeedString);
+  uint16_t rampValue = parseInteger(pRampString);
   if (error != ERROR_OK) {
     return;
   }
@@ -433,7 +433,7 @@ void initializeInterrupts(void) {
   cli();
 
   // Configure interrupt registers
-  initializeTickInterrupt(1);
+  initializeTickInterrupt(1000);
 
   Serial.println("Enabling global interrupts...");
   // Re-enable interrupts
@@ -478,6 +478,10 @@ inline void setStepperSpeed(uint8_t index, uint16_t speed) {
   s->goalTicksPerStep = speed;
 
   // TODO: figure out ramp or something idk.
+}
+
+inline void setRampRate(uint16_t rate) {
+  // TODO: ramp or something idk
 }
 
 inline void setStepperDirection(uint8_t index, uint8_t direction){
@@ -538,7 +542,6 @@ inline void doStepperTick(Stepper* s) {
 }
 
 void tick() {
-  Serial.println("Tick!");
   for (uint8_t i=0; i<NUMBER_OF_DRUMS; i++){
     Stepper* s = getStepper(i);
     if (s == NULL) continue;
