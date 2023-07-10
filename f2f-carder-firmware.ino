@@ -95,6 +95,9 @@ Stepper drums[] = {
 #define ERROR_FAILED_TO_TOKENIZE 2
 #define ERROR_DRUM_OUT_OF_BOUNDS 3
 #define ERROR_INVALID_CMD        4
+#define ERROR_INVALID_INTEGER    5
+#define ERROR_MUST_PROVIDE_DRUM  6
+#define ERROR_MISSING_INT_ARG    7
 
 const char* errorMessage[] = {
   "",
@@ -102,6 +105,9 @@ const char* errorMessage[] = {
   "The entered command could not be tokenized.",
   "The specified drum index was not valid.",
   "The specified command is not valid.",
+  "The provided integer was not valid.",
+  "The entered command requires a valid drum argument.",
+  "The entered command is missing an integer argument.",
 };
 
 uint8_t error = ERROR_OK;
@@ -142,6 +148,42 @@ uint8_t parseDrum(char* pDrum) {
     i++;
   }
   return atoi(pDrum);
+}
+
+uint16_t parseInteger(char* pInteger) {
+  char* i = pInteger;
+  while(*i != '\0') {
+    if (!isdigit(*i)) error = ERROR_INVALID_INTEGER;
+    i++;
+  }
+  return atoi(pInteger);
+}
+
+void doSetSpeed() {
+  char* pDrum = strtok(NULL, " \r\n");
+  if (pDrum == NULL) {
+    error = ERROR_MUST_PROVIDE_DRUM;
+    return;
+  }
+
+  uint8_t drumIndex = parseDrum(pDrum);
+  if (drumIndex >= NUMBER_OF_DRUMS) {
+    error = ERROR_MUST_PROVIDE_DRUM;
+    return;
+  }
+
+  char* pSpeedString = strtok(NULL, " \r\n");
+  if (pSpeedString == NULL) {
+    error = ERROR_MISSING_INT_ARG;
+    return;
+  }
+  
+  uint8_t speedValue = parseInteger(pSpeedString);
+  if (error != ERROR_OK) {
+    return;
+  }
+
+  setStepperSpeed(drumIndex, speedValue);
 }
 
 void doStart() {
@@ -360,6 +402,15 @@ inline void stopStepper(uint8_t index) {
   if (s == NULL) return;
 
   s->ticksPerStep = 0;
+}
+
+inline void setStepperSpeed(uint8_t index, uint16_t speed) {
+  Stepper* s = getStepper(index);
+  if (s == NULL) return;
+
+  s->goalTicksPerStep = speed;
+
+  // TODO: figure out ramp or something idk.
 }
 
 inline void setStepperDirection(uint8_t index, uint8_t direction){
