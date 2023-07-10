@@ -1,3 +1,47 @@
+/*
+About:
+This code is designed to run on an Arduino Mega 2650 to facilitate the tuning and
+control of the Field-to-Fiber Carder, an open-source machine to turn raw fiber 
+into sliver/roving. To do so, the Arduino Mega controls 12 stepper motor drivers
+to spin the drums of the carder.
+
+Explanation:
+One of the goals of this code was to be able to drive all 12 steppers independently
+such that the speed of one stepper would not affect the speed of any of the other steppers.
+Another goal was to ensure that the speed of the code would not change the speed of the
+steppers.
+
+To meet these goals, an interrupt-driven approach was adopted. The Arduino waits in a 
+loop checking for user input or errors. At a rate of 1000Hz, an interrupt is generated
+causing the Arduino to switch from this main loop to the Interrupt Subroutine (ISR) for
+timer 4, which calls the function tick().
+
+Each stepper has a status called ticksPerStep and tickCounter. On a tick, tickCounter is
+incremented. If tickCounter is equal to ticksPerStep, it is reset to zero. If tickCounter
+is less than half of the ticksPerStep, then the pulse signal for the stepper is low. If
+tickCounter is greater than half of ticksPerStep, the pulse signal for the stepper is high.
+This means that the rising edge for the stepper pulse is at the halfway point between
+ticksPerStep, and the falling edge for the stepper pulse is at ticksPerStep
+
+NOTE: This assumes that the stepper driver works on falling-edge logic. Nothing bad should
+happen if it works on rising-edge logic, other than the pulses will be off by half a phase
+which seems weird.
+
+Example:
+  ticksPerStep = 8
+
+  tickCounter:
+  0  1  2  3  4  5  6  7  8  0  1  ...
+              ------------|
+              |           |
+              |           |
+  ------------|           |-------
+
+This means that in the case where ticksPerStep = 1, the stepper will step every tick.
+*/
+
+
+
 #include <avr/io.h>
 #include <avr/interrupt.h>
 // Define the clock speed as being 16MHz. Setting this does not change the clock speed,
@@ -128,12 +172,20 @@ void checkForError(){
 
 #define MAX_COMMAND_LENGTH 16
 #define ECHO_OUTPUT
+#define ENABLE_LOG_INFO
 
 #ifdef ECHO_OUTPUT
 #define ECHO(X) Serial.print(X)
 #endif
 #ifndef ECHO_OUTPUT
 #define ECHO(X) //
+#endif
+
+#ifdef ENABLE_LOG_INFO
+#define LOG_INFO(X) Serial.println(X)
+#endif
+#ifndef ENABLE_LOG_INFO
+#define LOG_INFO(X) //
 #endif
 
 char command[MAX_COMMAND_LENGTH + 1];
@@ -178,12 +230,27 @@ void doSetSpeed() {
     return;
   }
   
-  uint8_t speedValue = parseInteger(pSpeedString);
+  uint8_t speedValue = (uint8_t)parseInteger(pSpeedString);
   if (error != ERROR_OK) {
     return;
   }
 
   setStepperSpeed(drumIndex, speedValue);
+}
+
+void doSetRamp() {
+  char* pRampString = strtok(NULL, " \r\n");
+  if (pRampString == NULL) {
+    error = ERROR_MISSING_INT_ARG;
+    return;
+  }
+
+  uint16_t rampValue = parseInteger(pSpeedString);
+  if (error != ERROR_OK) {
+    return;
+  }
+
+  setRampRate(rampValue);
 }
 
 void doStart() {
@@ -234,7 +301,7 @@ void executeCommand(char* pCommand, uint8_t commandLen) {
 
   }
   else if (strcmp(verb, "setspeed") == 0) {
-
+    doSetSpeed();
   }
   else if (strcmp(verb, "setramp") == 0) {
 
@@ -435,19 +502,36 @@ inline void doEndOfStepActivities(Stepper* s) {
 }
 
 inline void doStepperTick(Stepper* s) {
-  s->tickCounter++;
+  // 1. If tickCounter >= ticksPerStep, then reset the counter. The step is over.
+  // 2. If less than half the ticks per step, set stepper pulse low.
+  // 3. Increment tick counter
+  // 4. If greater than half the ticks per step, set stepper pulse high. This will cause a rising edge
+  //    at the halfway point. 
+
+  // The reason for following the above order is for cases where ticksPerStep = 1 so we can step every tick.
+  // The tick counter will be zero setting the pulse low, incremented, set the pulse high, repeat, and then reset.
+
+  // if ticksPerStep is zero, just return. Stepper is disabled.
+  if (s->ticksPerStep == 0){
+    return;
+  }
+
   // If we've reached our tick count, start over. This includes the case where ticksPerStep is 0 (stopped)
   if (s->tickCounter >= s->ticksPerStep) {
     s->tickCounter = 0;
     doEndOfStepActivities(s);
   }
-  
+
   // If the number of ticks is less than half of the ticks per step, set the pulse value low.
-  // When it passes the halfway point, trigger a rising edge to do a step.
   if (s->tickCounter < (s->ticksPerStep / 2)) {
     setStepperPulse(s, LOW);
   }
-  else
+
+  s->tickCounter++;
+  
+  // TODO: Does it know to do ticksPerStep >> 2 rather than division?
+  // When it passes the halfway point, trigger a rising edge to do a step.
+  if (s->tickCounter >= (s->ticksPerStep / 2))
   {
     setStepperPulse(s, HIGH);
   }
