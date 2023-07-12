@@ -527,7 +527,7 @@ inline void doStepperTick(Stepper* s) {
   }
 
   // If the number of ticks is less than half of the ticks per step, set the pulse value low.
-  if (s->tickCounter < (s->ticksPerStep / 2)) {
+  if (s->tickCounter <= (s->ticksPerStep / 2)) {
     setStepperPulse(s, LOW);
   }
 
